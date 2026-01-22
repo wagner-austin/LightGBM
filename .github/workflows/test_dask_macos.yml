@@ -1,0 +1,46 @@
+name: Test Dask macOS (Debug #4074)
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches:
+      - 'debug-4074*'  # Trigger on branches starting with debug-4074
+
+jobs:
+  test-dask-macos:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        run_number: [1, 2, 3, 4, 5]  # Run 5 times in parallel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy scikit-learn pandas dask distributed cloudpickle joblib pytest pyarrow
+
+      - name: Build and install LightGBM
+        run: |
+          pip install --verbose .
+
+      - name: Run failing dask test (attempt ${{ matrix.run_number }})
+        run: |
+          cd tests/python_package_test
+          # Run the specific test that fails intermittently
+          python -m pytest test_dask.py::test_model_and_local_version_are_picklable_whether_or_not_client_set_explicitly -v --tb=long 2>&1 | tee test_output.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-logs-run-${{ matrix.run_number }}
+          path: tests/python_package_test/test_output.log
