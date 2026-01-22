@@ -270,19 +270,52 @@ if [[ $OS_NAME == "macos" ]] && [[ -n "${ASAN_LIB:-}" ]] && [[ -f "$ASAN_LIB" ]]
     echo "=============================================="
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ASAN PYTEST START"
     echo "=============================================="
+    echo "COMPILER=$COMPILER"
+    echo "OS_NAME=$OS_NAME"
     echo "ASAN_LIB=$ASAN_LIB"
     echo "ASAN_OPTIONS=$ASAN_OPTIONS"
     echo "DYLD_INSERT_LIBRARIES will be set to: $ASAN_LIB"
-    echo "Python: $(which python) $(python --version 2>&1)"
-    echo "Pytest: $(which pytest) $(pytest --version 2>&1 | head -1)"
+    echo "----------------------------------------------"
+    echo "System info:"
+    uname -a
+    sw_vers
+    echo "----------------------------------------------"
+    echo "Python info:"
+    which python
+    python --version
+    python -c "import sys; print('sys.executable:', sys.executable)"
+    python -c "import sysconfig; print('sysconfig:', sysconfig.get_paths()['stdlib'])"
+    echo "----------------------------------------------"
+    echo "Pytest info:"
+    which pytest
+    pytest --version
+    echo "----------------------------------------------"
+    echo "ASAN library check:"
+    ls -la "$ASAN_LIB"
+    file "$ASAN_LIB"
+    echo "----------------------------------------------"
+    echo "LightGBM library check:"
+    ls -la ./lib_lightgbm.dylib 2>/dev/null || echo "lib_lightgbm.dylib not found in current dir"
+    python -c "import lightgbm; print('LightGBM path:', lightgbm.__file__)"
     echo "----------------------------------------------"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting pytest with ASAN..."
+    echo "Command: PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 DYLD_INSERT_LIBRARIES=$ASAN_LIB pytest ./tests -v -s --tb=long -x --log-cli-level=DEBUG"
+    echo "=============================================="
     # Force unbuffered, verbose, show all output, log each test
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
     DYLD_INSERT_LIBRARIES="$ASAN_LIB" \
-        pytest ./tests -v -s --tb=long -x --log-cli-level=DEBUG 2>&1
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pytest finished with exit code: $?"
+        pytest ./tests -v -s --tb=long -x --log-cli-level=DEBUG 2>&1 &
+    PYTEST_PID=$!
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pytest started with PID: $PYTEST_PID"
+    # Monitor the process and print status every 60 seconds
+    while kill -0 $PYTEST_PID 2>/dev/null; do
+        sleep 60
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pytest still running (PID $PYTEST_PID)..."
+    done
+    wait $PYTEST_PID
+    PYTEST_EXIT=$?
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pytest finished with exit code: $PYTEST_EXIT"
 elif [[ "${USE_LLDB_FOR_CRASH:-}" == "1" ]]; then
     # GCC on macOS: Run under lldb to catch crashes and get stack traces
     echo "Running pytest under lldb for crash debugging"
@@ -292,10 +325,11 @@ elif [[ "${USE_LLDB_FOR_CRASH:-}" == "1" ]]; then
          -k "thread backtrace all" \
          -k "quit 1" \
          -- python -m pytest ./tests
+    PYTEST_EXIT=$?
 else
     pytest ./tests
+    PYTEST_EXIT=$?
 fi
-PYTEST_EXIT=$?
 set -e
 
 # If pytest failed on macOS, check for crash info
