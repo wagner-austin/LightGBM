@@ -234,26 +234,29 @@ elif [[ $TASK == "mpi" ]]; then
         cmake -B build -S . -DUSE_MPI=ON -DUSE_DEBUG=ON
     fi
 else
-    # Configure based on compiler - ASAN works differently for clang vs gcc on macOS
+    # Build with ASAN for proper stack traces
     if [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "clang" ]]; then
-        # Clang ASAN works on macOS
-        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
-        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:fast_unwind_on_malloc=0"
+        # macOS + clang: Use ASAN with runtime preloading
+        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address
+        # Find ASAN runtime library path for preloading
+        ASAN_LIB="$(clang --print-resource-dir)/lib/darwin/libclang_rt.asan_osx_dynamic.dylib"
+        if [[ -f "$ASAN_LIB" ]]; then
+            export ASAN_LIB
+            echo "ASAN runtime found: $ASAN_LIB"
+        else
+            echo "WARNING: ASAN runtime not found at $ASAN_LIB"
+        fi
+        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1"
     elif [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "gcc" ]]; then
-        # GCC ASAN doesn't work on macOS due to mm_malloc.h conflicts
-        # Use debug build with core dumps instead
-        cmake -B build -S . -DUSE_DEBUG=ON \
+        # macOS + GCC: ASAN doesn't work, use debug symbols + lldb for stack traces
+        cmake -B build -S . \
             -DCMAKE_CXX_FLAGS="-g -fno-omit-frame-pointer" \
             -DCMAKE_C_FLAGS="-g -fno-omit-frame-pointer"
-        # Enable core dumps for crash analysis
-        ulimit -c unlimited
-        # Ensure /cores directory exists and check if writable
-        if [[ -w /cores ]] || sudo mkdir -p /cores 2>/dev/null; then
-            echo "Core dumps enabled, will be written to /cores/"
-        fi
+        export USE_LLDB_FOR_CRASH=1
+        echo "GCC on macOS: Using lldb for crash stack traces (ASAN not supported)"
     else
-        # Linux or other - ASAN should work
-        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
+        # Linux: ASAN works normally
+        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address
         export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1"
     fi
 fi
@@ -264,7 +267,22 @@ sh ./build-python.sh install --precompile || exit 1
 
 # Run tests and capture exit code
 set +e
-pytest ./tests
+if [[ $OS_NAME == "macos" ]] && [[ -n "${ASAN_LIB:-}" ]] && [[ -f "$ASAN_LIB" ]]; then
+    # Clang + ASAN: Preload ASAN runtime to make interceptors work with Python/ctypes
+    echo "Running pytest with ASAN runtime preloaded"
+    DYLD_INSERT_LIBRARIES="$ASAN_LIB" pytest ./tests
+elif [[ "${USE_LLDB_FOR_CRASH:-}" == "1" ]]; then
+    # GCC on macOS: Run under lldb to catch crashes and get stack traces
+    echo "Running pytest under lldb for crash debugging"
+    # lldb will print backtrace on crash, then exit
+    lldb -o "settings set target.process.stop-on-exec false" \
+         -o "run" \
+         -k "thread backtrace all" \
+         -k "quit 1" \
+         -- python -m pytest ./tests
+else
+    pytest ./tests
+fi
 PYTEST_EXIT=$?
 set -e
 
