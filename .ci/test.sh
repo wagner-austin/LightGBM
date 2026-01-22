@@ -234,10 +234,13 @@ elif [[ $TASK == "mpi" ]]; then
         cmake -B build -S . -DUSE_MPI=ON -DUSE_DEBUG=ON
     fi
 else
-    cmake -B build -S .
+    cmake -B build -S . -DUSE_SANITIZER=ON -DUSE_DEBUG=ON
 fi
 
 cmake --build build --target _lightgbm -j4 || exit 1
+
+# Enable ASAN stack traces for debugging issue #4074
+export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1"
 
 sh ./build-python.sh install --precompile || exit 1
 pytest ./tests || exit 1

@@ -93,16 +93,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Only macOS regular jobs for debugging issue #4074
-          - os: macos-15-intel
-            task: regular
-            compiler: gcc
-            python_version: '3.11'
-          - os: macos-15-intel
-            task: regular
-            compiler: clang
-            python_version: '3.11'
+        # Run 20x to catch intermittent SIGSEGV (~30% failure rate)
+        run_number: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        os: [macos-15-intel]
+        task: [regular]
+        compiler: [gcc, clang]
+        python_version: ['3.11']
     steps:
       - name: Install packages used by third-party actions
         if: ${{ matrix.in-ubuntu-base-container == 'true' }}
