@@ -234,13 +234,25 @@ elif [[ $TASK == "mpi" ]]; then
         cmake -B build -S . -DUSE_MPI=ON -DUSE_DEBUG=ON
     fi
 else
-    cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
+    # Configure based on compiler - ASAN works differently for clang vs gcc on macOS
+    if [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "clang" ]]; then
+        # Clang ASAN works on macOS
+        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
+        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:fast_unwind_on_malloc=0"
+    elif [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "gcc" ]]; then
+        # GCC ASAN on macOS needs -fpermissive to work around mm_malloc.h conflicts
+        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON \
+            -DCMAKE_CXX_FLAGS="-fpermissive -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fpermissive -fno-omit-frame-pointer"
+        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:fast_unwind_on_malloc=0"
+    else
+        # Linux or other - ASAN should work
+        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
+        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1"
+    fi
 fi
 
 cmake --build build --target _lightgbm -j4 || exit 1
-
-# Enable ASAN stack traces for debugging issue #4074
-export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1"
 
 sh ./build-python.sh install --precompile || exit 1
 pytest ./tests || exit 1
