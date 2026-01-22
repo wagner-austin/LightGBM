@@ -240,11 +240,17 @@ else
         cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
         export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:fast_unwind_on_malloc=0"
     elif [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "gcc" ]]; then
-        # GCC ASAN on macOS needs -fpermissive to work around mm_malloc.h conflicts
-        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON \
-            -DCMAKE_CXX_FLAGS="-fpermissive -fno-omit-frame-pointer" \
-            -DCMAKE_C_FLAGS="-fpermissive -fno-omit-frame-pointer"
-        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:fast_unwind_on_malloc=0"
+        # GCC ASAN doesn't work on macOS due to mm_malloc.h conflicts
+        # Use debug build with core dumps instead
+        cmake -B build -S . -DUSE_DEBUG=ON \
+            -DCMAKE_CXX_FLAGS="-g -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-g -fno-omit-frame-pointer"
+        # Enable core dumps for crash analysis
+        ulimit -c unlimited
+        # Ensure /cores directory exists and check if writable
+        if [[ -w /cores ]] || sudo mkdir -p /cores 2>/dev/null; then
+            echo "Core dumps enabled, will be written to /cores/"
+        fi
     else
         # Linux or other - ASAN should work
         cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
@@ -255,7 +261,40 @@ fi
 cmake --build build --target _lightgbm -j4 || exit 1
 
 sh ./build-python.sh install --precompile || exit 1
-pytest ./tests || exit 1
+
+# Run tests and capture exit code
+set +e
+pytest ./tests
+PYTEST_EXIT=$?
+set -e
+
+# If pytest failed on macOS, check for crash info
+if [[ $PYTEST_EXIT -ne 0 ]] && [[ $OS_NAME == "macos" ]]; then
+    echo "=== Pytest failed, checking for core dumps ==="
+    if ls /cores/core.* 1>/dev/null 2>&1; then
+        for corefile in /cores/core.*; do
+            echo "=== Found core dump: $corefile ==="
+            # Get stack trace from core dump using lldb
+            echo "thread backtrace all" | lldb -c "$corefile" 2>/dev/null || true
+        done
+    else
+        echo "No core dumps found in /cores/"
+        # Also check macOS crash reports
+        echo "=== Checking macOS crash reports ==="
+        ls -la ~/Library/Logs/DiagnosticReports/*.crash 2>/dev/null | tail -5 || echo "No crash reports found"
+        # Show most recent crash report if exists
+        LATEST_CRASH=$(ls -t ~/Library/Logs/DiagnosticReports/*.crash 2>/dev/null | head -1)
+        if [[ -n "$LATEST_CRASH" ]]; then
+            echo "=== Latest crash report: $LATEST_CRASH ==="
+            cat "$LATEST_CRASH" | head -200
+        fi
+    fi
+fi
+
+# Exit with pytest's exit code
+if [[ $PYTEST_EXIT -ne 0 ]]; then
+    exit $PYTEST_EXIT
+fi
 
 if [[ $TASK == "regular" ]]; then
     if [[ $PRODUCES_ARTIFACTS == "true" ]]; then
