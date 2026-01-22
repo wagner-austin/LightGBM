@@ -234,7 +234,7 @@ elif [[ $TASK == "mpi" ]]; then
         cmake -B build -S . -DUSE_MPI=ON -DUSE_DEBUG=ON
     fi
 else
-    cmake -B build -S . -DUSE_SANITIZER=ON -DUSE_DEBUG=ON
+    cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address -DUSE_DEBUG=ON
 fi
 
 cmake --build build --target _lightgbm -j4 || exit 1
