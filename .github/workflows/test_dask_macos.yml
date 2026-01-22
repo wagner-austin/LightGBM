@@ -6,6 +6,11 @@ on:
     branches:
       - 'debug-4074*'  # Trigger on branches starting with debug-4074
 
+env:
+  # Enable ASAN symbolization
+  ASAN_OPTIONS: symbolize=1:detect_leaks=0:halt_on_error=0:print_stacktrace=1
+  ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
+
 jobs:
   test-dask-macos:
     runs-on: macos-14
@@ -28,19 +33,45 @@ jobs:
           python -m pip install --upgrade pip
           pip install numpy scipy scikit-learn pandas dask distributed cloudpickle joblib pytest pyarrow
 
-      - name: Build and install LightGBM
+      - name: Build LightGBM with ASAN and debug symbols
         run: |
+          mkdir build && cd build
+          cmake .. \
+            -DUSE_SANITIZER=ON \
+            -DENABLED_SANITIZERS="address" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-g -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-g -fno-omit-frame-pointer"
+          make -j4
+          cd ..
+
+      - name: Install LightGBM Python package
+        run: |
+          cd python-package
           pip install --verbose .
 
       - name: Run failing dask test (attempt ${{ matrix.run_number }})
         run: |
           cd tests/python_package_test
-          # Run the specific test that fails intermittently
-          python -m pytest test_dask.py::test_model_and_local_version_are_picklable_whether_or_not_client_set_explicitly -v --tb=long 2>&1 | tee test_output.log
+          # Run the specific test that fails intermittently with verbose output
+          python -m pytest test_dask.py::test_model_and_local_version_are_picklable_whether_or_not_client_set_explicitly \
+            -v --tb=long -s 2>&1 | tee test_output.log
+        continue-on-error: true
 
-      - name: Upload logs on failure
-        if: failure()
+      - name: Capture system info on failure
+        if: always()
+        run: |
+          echo "=== System Info ===" >> test_info.log
+          uname -a >> test_info.log
+          python --version >> test_info.log
+          echo "=== Installed packages ===" >> test_info.log
+          pip list >> test_info.log
+
+      - name: Upload all logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: failure-logs-run-${{ matrix.run_number }}
-          path: tests/python_package_test/test_output.log
+          name: logs-run-${{ matrix.run_number }}
+          path: |
+            tests/python_package_test/test_output.log
+            test_info.log
