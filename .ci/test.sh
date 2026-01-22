@@ -234,11 +234,9 @@ elif [[ $TASK == "mpi" ]]; then
         cmake -B build -S . -DUSE_MPI=ON -DUSE_DEBUG=ON
     fi
 else
-    # Build with ASAN for proper stack traces
     if [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "clang" ]]; then
         # macOS + clang: Use ASAN with runtime preloading
         cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address
-        # Find ASAN runtime library path for preloading
         ASAN_LIB="$(clang --print-resource-dir)/lib/darwin/libclang_rt.asan_osx_dynamic.dylib"
         if [[ -f "$ASAN_LIB" ]]; then
             export ASAN_LIB
@@ -246,14 +244,14 @@ else
         else
             echo "WARNING: ASAN runtime not found at $ASAN_LIB"
         fi
-        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1"
+        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:verbosity=1"
     elif [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "gcc" ]]; then
-        # macOS + GCC: ASAN doesn't work, use debug symbols + lldb for stack traces
+        # macOS + GCC: ASAN doesn't work, use debug symbols + lldb
         cmake -B build -S . \
             -DCMAKE_CXX_FLAGS="-g -fno-omit-frame-pointer" \
             -DCMAKE_C_FLAGS="-g -fno-omit-frame-pointer"
         export USE_LLDB_FOR_CRASH=1
-        echo "GCC on macOS: Using lldb for crash stack traces (ASAN not supported)"
+        echo "GCC on macOS: Using lldb for crash stack traces"
     else
         # Linux: ASAN works normally
         cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address
@@ -269,8 +267,22 @@ sh ./build-python.sh install --precompile || exit 1
 set +e
 if [[ $OS_NAME == "macos" ]] && [[ -n "${ASAN_LIB:-}" ]] && [[ -f "$ASAN_LIB" ]]; then
     # Clang + ASAN: Preload ASAN runtime to make interceptors work with Python/ctypes
-    echo "Running pytest with ASAN runtime preloaded"
-    DYLD_INSERT_LIBRARIES="$ASAN_LIB" pytest ./tests
+    echo "=============================================="
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ASAN PYTEST START"
+    echo "=============================================="
+    echo "ASAN_LIB=$ASAN_LIB"
+    echo "ASAN_OPTIONS=$ASAN_OPTIONS"
+    echo "DYLD_INSERT_LIBRARIES will be set to: $ASAN_LIB"
+    echo "Python: $(which python) $(python --version 2>&1)"
+    echo "Pytest: $(which pytest) $(pytest --version 2>&1 | head -1)"
+    echo "----------------------------------------------"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting pytest with ASAN..."
+    # Force unbuffered, verbose, show all output, log each test
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    DYLD_INSERT_LIBRARIES="$ASAN_LIB" \
+        pytest ./tests -v -s --tb=long -x --log-cli-level=DEBUG 2>&1
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pytest finished with exit code: $?"
 elif [[ "${USE_LLDB_FOR_CRASH:-}" == "1" ]]; then
     # GCC on macOS: Run under lldb to catch crashes and get stack traces
     echo "Running pytest under lldb for crash debugging"
