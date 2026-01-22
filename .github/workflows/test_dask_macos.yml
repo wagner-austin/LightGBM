@@ -1,77 +1,73 @@
-name: Test Dask macOS (Debug #4074)
+name: Debug Dask macOS (#4074)
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
   push:
     branches:
-      - 'debug-4074*'  # Trigger on branches starting with debug-4074
+      - 'debug-4074*'
 
 env:
-  # Enable ASAN symbolization
-  ASAN_OPTIONS: symbolize=1:detect_leaks=0:halt_on_error=0:print_stacktrace=1
-  ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer
+  BUILD_ARTIFACTSTAGINGDIRECTORY: '${{ github.workspace }}/artifacts'
+  BUILD_SOURCESDIRECTORY: '${{ github.workspace }}'
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+  SKBUILD_STRICT_CONFIG: true
 
 jobs:
   test-dask-macos:
+    name: dask test (macos-14, ${{ matrix.compiler }}, Python ${{ matrix.python_version }}, run ${{ matrix.run_number }})
     runs-on: macos-14
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        run_number: [1, 2, 3, 4, 5]  # Run 5 times in parallel
+        include:
+          # Copy exact config from failing jobs, run multiple times
+          - compiler: gcc
+            python_version: '3.11'
+            run_number: 1
+          - compiler: gcc
+            python_version: '3.11'
+            run_number: 2
+          - compiler: gcc
+            python_version: '3.11'
+            run_number: 3
+          - compiler: clang
+            python_version: '3.11'
+            run_number: 1
+          - compiler: clang
+            python_version: '3.11'
+            run_number: 2
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
         with:
+          fetch-depth: 5
+          persist-credentials: false
           submodules: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
+      - name: Setup and run tests
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install numpy scipy scikit-learn pandas dask distributed cloudpickle joblib pytest pyarrow
+          export COMPILER="${{ matrix.compiler }}"
+          export TASK="regular"
+          export OS_NAME="macos"
+          export PYTHON_VERSION="${{ matrix.python_version }}"
+          export BUILD_DIRECTORY="$GITHUB_WORKSPACE"
+          export CONDA=${HOME}/miniforge
+          export PATH=${CONDA}/bin:${PATH}
 
-      - name: Build LightGBM with ASAN and debug symbols
-        run: |
-          mkdir build && cd build
-          cmake .. \
-            -DUSE_SANITIZER=ON \
-            -DENABLED_SANITIZERS="address" \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="-g -fno-omit-frame-pointer" \
-            -DCMAKE_C_FLAGS="-g -fno-omit-frame-pointer"
-          make -j4
-          cd ..
+          # Run the exact same setup as the real CI
+          $GITHUB_WORKSPACE/.ci/setup.sh || exit 1
 
-      - name: Install LightGBM Python package
-        run: |
-          cd python-package
-          pip install --verbose .
+          # But only run dask tests (not full test suite)
+          source ${CONDA}/bin/activate
+          conda activate test-env
 
-      - name: Run failing dask test (attempt ${{ matrix.run_number }})
-        run: |
-          cd tests/python_package_test
-          # Run the specific test that fails intermittently with verbose output
+          cd $GITHUB_WORKSPACE/tests/python_package_test
           python -m pytest test_dask.py::test_model_and_local_version_are_picklable_whether_or_not_client_set_explicitly \
-            -v --tb=long -s 2>&1 | tee test_output.log
-        continue-on-error: true
-
-      - name: Capture system info on failure
-        if: always()
-        run: |
-          echo "=== System Info ===" >> test_info.log
-          uname -a >> test_info.log
-          python --version >> test_info.log
-          echo "=== Installed packages ===" >> test_info.log
-          pip list >> test_info.log
-
-      - name: Upload all logs
+            -v --tb=long -s 2>&1 | tee $GITHUB_WORKSPACE/test_output_${{ matrix.run_number }}.log
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-run-${{ matrix.run_number }}
-          path: |
-            tests/python_package_test/test_output.log
-            test_info.log
+          name: logs-${{ matrix.compiler }}-run-${{ matrix.run_number }}
+          path: test_output_*.log
