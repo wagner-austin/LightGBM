@@ -6,7 +6,7 @@
 # Add flags
 macro(enable_sanitizer sanitizer)
   if(${sanitizer} MATCHES "address")
-    set(SAN_COMPILE_FLAGS "${SAN_COMPILE_FLAGS} -fsanitize=address")
+    set(SAN_COMPILE_FLAGS "${SAN_COMPILE_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
 
   elseif(${sanitizer} MATCHES "thread")
     set(SAN_COMPILE_FLAGS "${SAN_COMPILE_FLAGS} -fsanitize=thread")
