@@ -158,9 +158,25 @@ jobs:
           export PATH=${CONDA}/bin:${PATH}
           export PRODUCES_ARTIFACTS="${{ matrix.produces-artifacts }}"
           $GITHUB_WORKSPACE/.ci/setup.sh || exit 1
-          # Run only the flaky dask test in a loop to reproduce issue #4074
-          source ${CONDA}/bin/activate test-env
+
+          # Create conda environment (same as test.sh does)
+          CONDA_ENV="test-env"
+          CONDA_PYTHON_REQUIREMENT="python=${PYTHON_VERSION}[build=*_cp*]"
+          CONDA_REQUIREMENT_FILE="${GITHUB_WORKSPACE}/.ci/conda-envs/ci-core.txt"
+          conda create -y -n "${CONDA_ENV}" --file "${CONDA_REQUIREMENT_FILE}" "${CONDA_PYTHON_REQUIREMENT}" || exit 1
+
+          source ${CONDA}/bin/activate ${CONDA_ENV}
+
+          # Set compiler for macOS gcc
+          if [[ "${{ matrix.compiler }}" == "gcc" ]]; then
+            export CXX=g++-14
+            export CC=gcc-14
+          fi
+
+          # Install lightgbm
           cd $GITHUB_WORKSPACE/python-package && pip install -e . --no-build-isolation || exit 1
+
+          # Run the flaky dask test in a loop to reproduce issue #4074
           cd $GITHUB_WORKSPACE/tests/python_package_test
           for i in {1..20}; do
             echo "=== Run $i of 20 ==="
