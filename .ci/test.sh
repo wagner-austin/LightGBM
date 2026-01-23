@@ -235,15 +235,13 @@ elif [[ $TASK == "mpi" ]]; then
     fi
 else
     if [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "clang" ]]; then
-        # macOS + clang: Use ASAN with runtime preloading
-        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address
+        # macOS + clang: Use ASAN with shared runtime linked directly (avoid DYLD_INSERT_LIBRARIES issues)
         ASAN_LIB="$(clang --print-resource-dir)/lib/darwin/libclang_rt.asan_osx_dynamic.dylib"
-        if [[ -f "$ASAN_LIB" ]]; then
-            export ASAN_LIB
-            echo "ASAN runtime found: $ASAN_LIB"
-        else
-            echo "WARNING: ASAN runtime not found at $ASAN_LIB"
-        fi
+        echo "ASAN runtime: $ASAN_LIB"
+        cmake -B build -S . -DUSE_SANITIZER=ON -DENABLED_SANITIZERS=address \
+            -DCMAKE_SHARED_LINKER_FLAGS="-shared-libasan -Wl,-rpath,$(dirname $ASAN_LIB)" \
+            -DCMAKE_EXE_LINKER_FLAGS="-shared-libasan"
+        export ASAN_LIB
         export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:verbosity=1"
     elif [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "gcc" ]]; then
         # macOS + GCC: ASAN doesn't work, use debug symbols + lldb
@@ -296,6 +294,8 @@ if [[ $OS_NAME == "macos" ]] && [[ -n "${ASAN_LIB:-}" ]] && [[ -f "$ASAN_LIB" ]]
     echo "----------------------------------------------"
     echo "LightGBM library check:"
     ls -la ./lib_lightgbm.dylib 2>/dev/null || echo "lib_lightgbm.dylib not found in current dir"
+    echo "Checking if ASAN is linked into lib_lightgbm.dylib:"
+    otool -L ./lib_lightgbm.dylib 2>/dev/null | grep -i asan || echo "ASAN not found in otool output"
     python -c "import lightgbm; print('LightGBM path:', lightgbm.__file__)"
     echo "----------------------------------------------"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting pytest with ASAN..."
