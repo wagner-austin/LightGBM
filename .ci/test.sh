@@ -323,7 +323,13 @@ if [[ $OS_NAME == "macos" ]] && [[ -n "${ASAN_LIB:-}" ]] && [[ -f "$ASAN_LIB" ]]
 elif [[ "${USE_LLDB_FOR_CRASH:-}" == "1" ]]; then
     # GCC on macOS: Run under lldb to catch crashes and get stack traces
     echo "Running pytest under lldb for crash debugging"
-    echo "Only running test_dask.py to focus on intermittent SIGSEGV issue"
+
+    # First, run SIGPIPE reproduction test to verify the theory
+    echo "=== Running SIGPIPE reproduction test ==="
+    python ./test_sigpipe.py || echo "SIGPIPE test exited (may have crashed - that proves the theory)"
+    echo "=== End SIGPIPE test ==="
+
+    echo "Only running test_dask.py to focus on intermittent issue"
     # lldb will print backtrace on crash, then exit
     lldb -o "settings set target.process.stop-on-exec false" \
          -o "run" \
