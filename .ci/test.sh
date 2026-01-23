@@ -301,6 +301,10 @@ if [[ $OS_NAME == "macos" ]] && [[ -n "${ASAN_LIB:-}" ]] && [[ -f "$ASAN_LIB" ]]
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting pytest with ASAN..."
     echo "Command: PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 DYLD_INSERT_LIBRARIES=$ASAN_LIB pytest ./tests -v -s --tb=long -x --log-cli-level=DEBUG"
     echo "=============================================="
+    # Verify DYLD_INSERT_LIBRARIES is being set correctly
+    echo "Testing if DYLD_INSERT_LIBRARIES passes through:"
+    DYLD_INSERT_LIBRARIES="$ASAN_LIB" python -c "import os; print('DYLD_INSERT_LIBRARIES in Python:', os.environ.get('DYLD_INSERT_LIBRARIES', 'NOT SET'))"
+    echo "----------------------------------------------"
     # Force unbuffered, verbose, show all output, log each test
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
