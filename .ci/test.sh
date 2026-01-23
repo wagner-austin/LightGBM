@@ -242,7 +242,7 @@ else
             -DCMAKE_SHARED_LINKER_FLAGS="-shared-libasan -Wl,-rpath,$(dirname $ASAN_LIB)" \
             -DCMAKE_EXE_LINKER_FLAGS="-shared-libasan"
         export ASAN_LIB
-        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:verbosity=1"
+        export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0:print_stacktrace=1:verbosity=1:verify_asan_link_order=0"
     elif [[ $OS_NAME == "macos" ]] && [[ $COMPILER == "gcc" ]]; then
         # macOS + GCC: ASAN doesn't work, use debug symbols + lldb
         cmake -B build -S . \
