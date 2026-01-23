@@ -93,11 +93,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Reduced to 1 run while debugging ASAN setup
-        run_number: [1]
+        # 10 runs with GCC only (using lldb for crash catching)
+        # ASAN doesn't work with Dask worker subprocesses on macOS due to SIP
+        run_number: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         os: [macos-15-intel]
         task: [regular]
-        compiler: [gcc, clang]
+        compiler: [gcc]
         python_version: ['3.11']
     steps:
       - name: Install packages used by third-party actions
