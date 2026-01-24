@@ -92,31 +92,6 @@ const int kMaxReceiveSize = 100 * 1000;
 const int kNoDelay = 1;
 }
 
-/*!
- * \brief Check if a socket error indicates the connection was closed by peer.
- *
- * These errors are expected during distributed training shutdown when workers
- * close connections at different times. They should not cause a fatal crash.
- *
- * See https://github.com/microsoft/LightGBM/issues/4074
- *
- * \param err_code The error code from GetLastError() or errno
- * \return true if this is a connection-closed error that can be handled gracefully
- */
-inline bool IsConnectionClosedError(int err_code) {
-#if defined(_WIN32)
-  return err_code == WSAECONNRESET ||    // 10054: Connection reset by peer
-         err_code == WSAECONNABORTED ||  // 10053: Software caused connection abort
-         err_code == WSAESHUTDOWN ||     // 10058: Cannot send after socket shutdown
-         err_code == WSAENOTCONN;        // 10057: Socket is not connected
-#else
-  return err_code == EPIPE ||        // 32: Broken pipe (write to closed socket)
-         err_code == ECONNRESET ||   // 104/54: Connection reset by peer
-         err_code == ENOTCONN ||     // 107: Transport endpoint is not connected
-         err_code == ESHUTDOWN;      // 108: Cannot send after transport endpoint shutdown
-#endif
-}
-
 class TcpSocket {
  public:
   TcpSocket() {
@@ -307,19 +282,9 @@ class TcpSocket {
   }
 
   inline int Send(const char *buf_, int len, int flag = 0) {
-    if (IsClosed()) {
-      return 0;  // Socket already closed
-    }
     int cur_cnt = send(sockfd_, buf_, len, flag);
     if (cur_cnt == SOCKET_ERROR) {
       int err_code = GetLastError();
-      if (IsConnectionClosedError(err_code)) {
-        // Connection closed by peer - expected during shutdown, not fatal
-        // Close socket so callers can detect via IsClosed()
-        // See https://github.com/microsoft/LightGBM/issues/4074
-        Close();
-        return 0;
-      }
 #if defined(_WIN32)
       Log::Fatal("Socket send error (code: %d)", err_code);
 #else
@@ -330,19 +295,9 @@ class TcpSocket {
   }
 
   inline int Recv(char *buf_, int len, int flags = 0) {
-    if (IsClosed()) {
-      return 0;  // Socket already closed
-    }
     int cur_cnt = recv(sockfd_, buf_ , len , flags);
     if (cur_cnt == SOCKET_ERROR) {
       int err_code = GetLastError();
-      if (IsConnectionClosedError(err_code)) {
-        // Connection closed by peer - expected during shutdown, not fatal
-        // Close socket so callers can detect via IsClosed()
-        // See https://github.com/microsoft/LightGBM/issues/4074
-        Close();
-        return 0;
-      }
 #if defined(_WIN32)
       Log::Fatal("Socket recv error (code: %d)", err_code);
 #else
