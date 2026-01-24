@@ -307,13 +307,18 @@ class TcpSocket {
   }
 
   inline int Send(const char *buf_, int len, int flag = 0) {
+    if (IsClosed()) {
+      return 0;  // Socket already closed
+    }
     int cur_cnt = send(sockfd_, buf_, len, flag);
     if (cur_cnt == SOCKET_ERROR) {
       int err_code = GetLastError();
       if (IsConnectionClosedError(err_code)) {
         // Connection closed by peer - expected during shutdown, not fatal
+        // Close socket so callers can detect via IsClosed()
         // See https://github.com/microsoft/LightGBM/issues/4074
-        return SOCKET_ERROR;
+        Close();
+        return 0;
       }
 #if defined(_WIN32)
       Log::Fatal("Socket send error (code: %d)", err_code);
@@ -325,13 +330,18 @@ class TcpSocket {
   }
 
   inline int Recv(char *buf_, int len, int flags = 0) {
+    if (IsClosed()) {
+      return 0;  // Socket already closed
+    }
     int cur_cnt = recv(sockfd_, buf_ , len , flags);
     if (cur_cnt == SOCKET_ERROR) {
       int err_code = GetLastError();
       if (IsConnectionClosedError(err_code)) {
         // Connection closed by peer - expected during shutdown, not fatal
+        // Close socket so callers can detect via IsClosed()
         // See https://github.com/microsoft/LightGBM/issues/4074
-        return SOCKET_ERROR;
+        Close();
+        return 0;
       }
 #if defined(_WIN32)
       Log::Fatal("Socket recv error (code: %d)", err_code);

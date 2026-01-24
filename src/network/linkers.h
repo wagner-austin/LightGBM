@@ -242,9 +242,19 @@ inline void Linkers::SendRecv(int send_rank, char* send_data, int64_t send_len,
 inline void Linkers::Recv(int rank, char* data, int len) const {
   int recv_cnt = 0;
   while (recv_cnt < len) {
-    recv_cnt += linkers_[rank]->Recv(data + recv_cnt,
+    int cur_recv = linkers_[rank]->Recv(data + recv_cnt,
       // len - recv_cnt
       std::min(len - recv_cnt, SocketConfig::kMaxReceiveSize));
+    if (cur_recv <= 0) {
+      // Connection closed by peer - expected during shutdown
+      // See https://github.com/microsoft/LightGBM/issues/4074
+      if (linkers_[rank]->IsClosed()) {
+        Log::Warning("Network connection closed during recv from rank %d (received %d of %d bytes)",
+                     rank, recv_cnt, len);
+        throw std::runtime_error("Network connection closed during distributed training shutdown");
+      }
+    }
+    recv_cnt += cur_recv;
   }
 }
 
@@ -254,7 +264,17 @@ inline void Linkers::Send(int rank, char* data, int len) const {
   }
   int send_cnt = 0;
   while (send_cnt < len) {
-    send_cnt += linkers_[rank]->Send(data + send_cnt, len - send_cnt);
+    int cur_send = linkers_[rank]->Send(data + send_cnt, len - send_cnt);
+    if (cur_send <= 0) {
+      // Connection closed by peer - expected during shutdown
+      // See https://github.com/microsoft/LightGBM/issues/4074
+      if (linkers_[rank]->IsClosed()) {
+        Log::Warning("Network connection closed during send to rank %d (sent %d of %d bytes)",
+                     rank, send_cnt, len);
+        throw std::runtime_error("Network connection closed during distributed training shutdown");
+      }
+    }
+    send_cnt += cur_send;
   }
 }
 
