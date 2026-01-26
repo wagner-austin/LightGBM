@@ -36,6 +36,7 @@
 #include <unistd.h>
 
 #include <ifaddrs.h>
+#include <sys/time.h>
 
 #endif  // defined(_WIN32)
 
@@ -117,8 +118,16 @@ class TcpSocket {
   }
   ~TcpSocket() {
   }
-  inline void SetTimeout(int timeout) {
-    setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
+  inline void SetTimeout(int timeout_ms) {
+#if defined(_WIN32)
+    DWORD timeout = static_cast<DWORD>(timeout_ms);
+    setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+#else
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
   }
   inline void ConfigSocket() {
     if (sockfd_ == INVALID_SOCKET) {
@@ -259,6 +268,25 @@ class TcpSocket {
     listen(sockfd_, backlog);
   }
 
+  /*!
+   * \brief Check if error code indicates connection was closed by peer
+   * These errors are expected during distributed training shutdown
+   * See https://github.com/microsoft/LightGBM/issues/4074
+   */
+  static inline bool IsConnectionClosedError(int err_code) {
+#if defined(_WIN32)
+    return err_code == WSAECONNRESET ||    // 10054: Connection reset by peer
+           err_code == WSAECONNABORTED ||  // 10053: Connection aborted
+           err_code == WSAESHUTDOWN ||     // 10058: Socket shutdown
+           err_code == WSAENOTCONN;        // 10057: Not connected
+#else
+    return err_code == EPIPE ||        // 32: Broken pipe
+           err_code == ECONNRESET ||   // 104 (Linux) / 54 (macOS): Connection reset
+           err_code == ENOTCONN ||     // 107: Not connected
+           err_code == ESHUTDOWN;      // 108: Socket shutdown
+#endif
+  }
+
   inline TcpSocket Accept() {
     SOCKET newfd = accept(sockfd_, NULL, NULL);
     if (newfd == INVALID_SOCKET) {
@@ -276,6 +304,12 @@ class TcpSocket {
     int cur_cnt = send(sockfd_, buf_, len, flag);
     if (cur_cnt == SOCKET_ERROR) {
       int err_code = GetLastError();
+      if (IsConnectionClosedError(err_code)) {
+        // Connection closed by peer - expected during shutdown
+        // Return SOCKET_ERROR to let caller handle gracefully
+        // See https://github.com/microsoft/LightGBM/issues/4074
+        return SOCKET_ERROR;
+      }
 #if defined(_WIN32)
       Log::Fatal("Socket send error (code: %d)", err_code);
 #else
@@ -289,6 +323,12 @@ class TcpSocket {
     int cur_cnt = recv(sockfd_, buf_ , len , flags);
     if (cur_cnt == SOCKET_ERROR) {
       int err_code = GetLastError();
+      if (IsConnectionClosedError(err_code)) {
+        // Connection closed by peer - expected during shutdown
+        // Return SOCKET_ERROR to let caller handle gracefully
+        // See https://github.com/microsoft/LightGBM/issues/4074
+        return SOCKET_ERROR;
+      }
 #if defined(_WIN32)
       Log::Fatal("Socket recv error (code: %d)", err_code);
 #else
